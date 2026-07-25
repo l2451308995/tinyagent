@@ -23,9 +23,32 @@ public class ReActAgent {
     private static final int DEFAULT_MAX_STEPS = 10;
     private static final int DEFAULT_MAX_TOKENS = 8000;
 
+    // 默认人设：不指定 systemPrompt 时用它，保持老代码行为不变
+    public static final String DEFAULT_SYSTEM_PROMPT = """
+            你是比特严选的智能客服助手，负责帮助用户解决商品咨询、\
+            订单查询、物流追踪、退款换货等问题。
+            请根据用户的问题，合理选择工具获取真实信息，\
+            然后给出准确、友好的回复。
+
+            注意事项：
+            - 合理选择工具，每次调用后分析结果再决定下一步
+            - 如果工具返回错误，分析原因并尝试换一种方式解决
+            - 如果用户的问题超出工具能力范围，直接如实告知
+            - 最终回复面向用户，不要暴露工具名、JSON 数据等内部细节
+            - 避免重复调用相同的工具获取相同的信息
+            - 注意对话上下文，用户可能会用代词（如"它""那个""这个订单"）引用之前提到的内容
+
+            工具选择原则：
+            - 查订单状态、物流轨迹这类实时数据，直接调对应的查询工具，不要先去知识库检索
+            - 对比商品的具体规格参数，用商品对比工具拿结构化数据，不要用知识库检索代替
+            - 平台规则（退货、保修、运费）、选购建议、功能介绍这类知识性问题，才查知识库
+            - 原则：能用结构化工具精确获取的信息，就不要去知识库模糊检索；拿不准时先判断问题类型再选工具
+            """;
+
     private final LlmClient llmClient;
     private final ToolRegistry toolRegistry;
     private final ObjectMapper objectMapper;
+    private final String systemPrompt;
     private final int maxSteps;
     private final int maxTokens;
     private final ChatMemory chatMemory;
@@ -61,9 +84,29 @@ public class ReActAgent {
                       int maxSteps, int maxTokens, ChatMemory chatMemory,
                       LongTermMemoryRetriever memoryRetriever,
                       ToolFilter toolFilter, ObservationFolder observationFolder) {
+        this(llmClient, toolRegistry, DEFAULT_SYSTEM_PROMPT, maxSteps, maxTokens,
+                chatMemory, memoryRetriever, toolFilter, observationFolder);
+    }
+
+    // 专家友好构造器：给一份人设，其余记忆、筛选组件默认关闭
+    // 注意直接委托到下面的全参主构造器，把 systemPrompt 传下去——
+    // 绝不能中转到上面的 8 参构造器，否则人设会被悄悄换成默认客服
+    public ReActAgent(LlmClient llmClient, ToolRegistry toolRegistry,
+                      String systemPrompt, int maxSteps, int maxTokens) {
+        this(llmClient, toolRegistry, systemPrompt, maxSteps, maxTokens,
+                null, null, null, null);
+    }
+
+    // 全参主构造器：唯一真正给字段赋值的地方。systemPrompt 为空时回退默认人设
+    public ReActAgent(LlmClient llmClient, ToolRegistry toolRegistry,
+                      String systemPrompt, int maxSteps, int maxTokens,
+                      ChatMemory chatMemory, LongTermMemoryRetriever memoryRetriever,
+                      ToolFilter toolFilter, ObservationFolder observationFolder) {
         this.llmClient = llmClient;
         this.toolRegistry = toolRegistry;
         this.objectMapper = llmClient.getObjectMapper();
+        this.systemPrompt = (systemPrompt == null || systemPrompt.isBlank())
+                ? DEFAULT_SYSTEM_PROMPT : systemPrompt;
         this.maxSteps = maxSteps;
         this.maxTokens = maxTokens;
         this.chatMemory = chatMemory;
@@ -304,26 +347,7 @@ public class ReActAgent {
     }
 
     private String buildSystemPrompt() {
-        return """
-                你是比特严选的智能客服助手，负责帮助用户解决商品咨询、\
-                订单查询、物流追踪、退款换货等问题。
-                请根据用户的问题，合理选择工具获取真实信息，\
-                然后给出准确、友好的回复。
-
-                注意事项：
-                - 合理选择工具，每次调用后分析结果再决定下一步
-                - 如果工具返回错误，分析原因并尝试换一种方式解决
-                - 如果用户的问题超出工具能力范围，直接如实告知
-                - 最终回复面向用户，不要暴露工具名、JSON 数据等内部细节
-                - 避免重复调用相同的工具获取相同的信息
-                - 注意对话上下文，用户可能会用代词（如"它""那个""这个订单"）引用之前提到的内容
-
-                工具选择原则：
-                - 查订单状态、物流轨迹这类实时数据，直接调对应的查询工具，不要先去知识库检索
-                - 对比商品的具体规格参数，用商品对比工具拿结构化数据，不要用知识库检索代替
-                - 平台规则（退货、保修、运费）、选购建议、功能介绍这类知识性问题，才查知识库
-                - 原则：能用结构化工具精确获取的信息，就不要去知识库模糊检索；拿不准时先判断问题类型再选工具
-                """;
+        return systemPrompt;
     }
 
     private enum RepeatAction {
