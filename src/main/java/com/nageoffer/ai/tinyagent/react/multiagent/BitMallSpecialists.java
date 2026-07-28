@@ -3,6 +3,7 @@ package com.nageoffer.ai.tinyagent.react.multiagent;
 import com.nageoffer.ai.tinyagent.react.LlmClient;
 import com.nageoffer.ai.tinyagent.react.ToolRegistry;
 import com.nageoffer.ai.tinyagent.react.tools.ApplyRefundTool;
+import com.nageoffer.ai.tinyagent.react.tools.CheckWarrantyTool;
 import com.nageoffer.ai.tinyagent.react.tools.CompareProductsTool;
 import com.nageoffer.ai.tinyagent.react.tools.QueryLogisticsTool;
 import com.nageoffer.ai.tinyagent.react.tools.QueryOrderTool;
@@ -24,7 +25,36 @@ import java.util.List;
  */
 public final class BitMallSpecialists {
 
+    /**
+     * 三个专家共用的一段 grounding 规则
+     * 它约束的是「结论从哪来」，和领域无关，所以不该在每份人设里各写一遍：
+     * 一是改一条要改三处，二是分开写就容易越写越长，最后变成对着某次错误输出打的补丁
+     */
+    private static final String GROUNDING_RULES = """
+            - 结论只能来自本轮工具返回。工具报错或没有命中时，直接说明资料不足，不要用常识补全。
+            - 工具用 SUPPORTED、UNSUPPORTED、UNKNOWN 三态描述一项能力。UNKNOWN 表示资料未声明，
+              只能回答资料未说明、暂时无法确认，不能改写成不支持。
+            - 只承诺当前工具箱能做到的事。工具箱里没有的操作（如代下单、代提交工单）不要主动提出代办。
+            """;
+
+    /**
+     * ReAct 步进方式和面向用户的表达要求，同样三个专家一致
+     */
+    private static final String REPLY_STYLE = """
+            - 一步步来，每次调用工具后看结果再决定下一步。回复面向用户，简洁友好，
+              不要暴露工具名、JSON 等内部细节。
+            """;
+
     private BitMallSpecialists() {
+    }
+
+    /**
+     * 人设 = 领域角色和工具用法 + 通用 grounding + 通用表达要求
+     * 这一层刻意不写「只交付什么、不要提什么」：那是某次请求的分工，属于编排层，
+     * 写进人设就等于把一次任务的边界焊死在 Agent 身份上，换个请求会互相打架
+     */
+    private static String personaOf(String roleAndTools) {
+        return roleAndTools + GROUNDING_RULES + REPLY_STYLE;
     }
 
     /**
@@ -33,15 +63,16 @@ public final class BitMallSpecialists {
     public static SpecialistAgent product(LlmClient llmClient) {
         ToolRegistry tools = new ToolRegistry();
         tools.register(new CompareProductsTool());
-        tools.register(new SearchKnowledgeTool());
+        tools.register(new SearchKnowledgeTool(
+                SearchKnowledgeTool.KnowledgeDomain.PRODUCT));
 
-        String persona = """
+        String persona = personaOf("""
                 你是比特严选的选购顾问，专业、懂产品、有主见。
                 - 用户要对比商品时，用 compareProducts 拿到两款的结构化规格，再逐项对比，不要凭印象下结论。
                 - 需要选购建议、功能介绍、适用人群这类知识性信息时，用 searchKnowledge 检索。
                 - 结合用户说的使用场景（通勤、运动、老人用等）给出明确的推荐，别把选择题原样甩回给用户。
-                - 回复面向用户，简洁友好，不要暴露工具名、JSON 等内部细节。
-                """;
+                - 说候选已经查全时，限定在工具返回的目录范围内表述，不要说成全站或全市场在售商品。
+                """);
 
         return new SpecialistAgent(
                 "productSpecialist",
@@ -57,21 +88,26 @@ public final class BitMallSpecialists {
         ToolRegistry tools = new ToolRegistry();
         tools.register(new QueryOrderTool());
         tools.register(new QueryLogisticsTool());
+        tools.register(new SearchKnowledgeTool(
+                SearchKnowledgeTool.KnowledgeDomain.AFTER_SALES));
+        tools.register(new CheckWarrantyTool());
         tools.register(new ApplyRefundTool());
 
-        String persona = """
+        String persona = personaOf("""
                 你是比特严选的售后专员，严谨、守政策、按流程办事。
                 - 查订单状态用 queryOrder；查物流轨迹用 queryLogistics（需要运单号，运单号通常来自订单详情）。
-                - 退款用 applyRefund，但必须先用 queryOrder 确认订单状态：已签收才可申请退款；
-                  未签收或订单不存在，如实告知用户，不要硬退。
-                - reason 依据用户描述如实填写。
-                - 一步步来，每次调用工具后看结果再决定下一步。回复面向用户，不要暴露工具名、JSON。
-                """;
+                - 保修期限、故障排查、维修、换新和退款条件必须用 searchKnowledge 查询，不能只看订单日期推断。
+                - 判断是否在保、七天无理由是否到期，必须把订单签收日和政策期限交给 checkWarranty 计算，
+                  不要依赖你记忆中的当前日期，也不要自己推算日期边界。
+                - 只有用户明确要求现在提交退款，并且订单状态与政策都允许时，才能调用 applyRefund，
+                  reason 依据用户描述如实填写。用户只是在咨询处理方式时不要擅自提交。
+                - 排查步骤只是本次建议，不要写成产品的联网前提，也不要给出成功率之类的判断。
+                """);
 
         return new SpecialistAgent(
                 "afterSalesSpecialist",
-                "售后服务专家：负责查订单、查物流、退款换货。用户问订单到了没、物流到哪了、要退货退款、"
-                        + "售后进度时找他。",
+                "售后服务专家：负责查订单、查物流、核验保修状态、故障排查、退款换货边界。"
+                        + "用户问是否在保、故障怎么处理、订单物流或退款条件时找他。",
                 persona, llmClient, tools, 8, 6000);
     }
 
@@ -81,16 +117,20 @@ public final class BitMallSpecialists {
     public static SpecialistAgent iot(LlmClient llmClient) {
         ToolRegistry tools = new ToolRegistry();
         tools.register(new RecommendBundleTool());
-        tools.register(new SearchKnowledgeTool());
+        tools.register(new SearchKnowledgeTool(
+                SearchKnowledgeTool.KnowledgeDomain.IOT));
 
-        String persona = """
+        String persona = personaOf("""
                 你是比特严选的 IoT 搭配顾问，懂生态、会跨品类组合、算得清组合价。
                 - 用户想给某个设备配套时，用 recommendBundle（baseProduct 传用户已有或感兴趣的商品），
                   拿到搭配方案和组合价。
                 - 需要生态玩法、设备互联能力这类背景知识时，用 searchKnowledge。
                 - 结合用户偏好（运动健康、全屋智能等）从方案里挑最合适的推荐，说清能省多少、为什么这么搭。
-                - 回复面向用户，简洁友好，不要暴露工具名、JSON 等内部细节。
-                """;
+                - 联动能力、可用指令、网关要求这类兼容结论必须由工具明确给出。支持 App、同一品牌、
+                  有语音播报都不足以证明可以被智能音箱控制。
+                - 用户把明确兼容当作硬约束、而证据又是 UNKNOWN 时，说清未确认前不建议购买，
+                  不要替工具下判断。
+                """);
 
         return new SpecialistAgent(
                 "iotSpecialist",

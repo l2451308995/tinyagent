@@ -70,6 +70,18 @@ public class ContextBudget {
                 + historyTokens + currentTurnTokens;
     }
 
+    /**
+     * 发起下一次模型调用前，必须给模型回复保留固定空间
+     * 以前 currentTurnReserve 只参与报告，没有参与准入判断，长输入仍然会把生成空间吃光
+     */
+    public boolean canStartModelCall() {
+        return getTotalUsed() + currentTurnReserve <= totalBudget;
+    }
+
+    public int getProjectedTotalWithReserve() {
+        return getTotalUsed() + currentTurnReserve;
+    }
+
     public boolean isExceeded() {
         return getTotalUsed() >= totalBudget;
     }
@@ -79,6 +91,11 @@ public class ContextBudget {
                 "系统提示词 %d + 长期记忆 %d + 工具描述 %d + 对话历史 %d + 当前轮次 %d = %d / %d",
                 systemPromptTokens, memoryTokens, toolDescTokens,
                 historyTokens, currentTurnTokens, getTotalUsed(), totalBudget);
+    }
+
+    public String getPreflightReport() {
+        return getReport() + "，预留生成空间 " + currentTurnReserve
+                + "，准入估算 " + getProjectedTotalWithReserve() + " / " + totalBudget;
     }
 
     private int estimateTokens(String text) {

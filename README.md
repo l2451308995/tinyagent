@@ -69,6 +69,7 @@ TinyAgent 是一个用 Java 实现的轻量级 Agent 教学项目。它以“比
 | `react.memory` | 会话记忆、持久化会话、长期记忆、画像提取和会话标题生成 |
 | `react.context` | 上下文预算、工具筛选、Observation 折叠 |
 | `react.skill` | Skill 加载、注册、适配和执行 |
+| `react.multiagent` | 主从式多智能体：Agent 抽象、子 Agent、编排者、共享黑板、消息总线、结果聚合 |
 | `react.demo` | 不同能力的命令行演示入口 |
 | `resources/skills` | Markdown 技能定义文件 |
 | `resources/schema.sql` | PostgreSQL / pgvector 表结构 |
@@ -142,6 +143,20 @@ Skill 技能示例：
 ```bash
 ./mvnw -q -DskipTests compile exec:java \
   -Dexec.mainClass=com.nageoffer.ai.tinyagent.react.demo.SkillDemo
+```
+
+主从式多智能体示例，编排者按 agent card 分诊，收齐子 Agent 结论后综合：
+
+```bash
+./mvnw -q -DskipTests compile exec:java \
+  -Dexec.mainClass=com.nageoffer.ai.tinyagent.react.demo.MultiAgentSupervisorDemo
+```
+
+多智能体上下文与通信示例：用固定的“售后 → 商品 → IoT”执行计划，演示共享黑板、显式消息、依赖 Handoff 和确定性结果聚合。三位专家都是真实的 ReAct Agent，需要在 `.env` 里配好 `TINYAGENT_API_KEY`，工具则全部是内存 Mock：
+
+```bash
+./mvnw -q -DskipTests compile exec:java \
+  -Dexec.mainClass=com.nageoffer.ai.tinyagent.react.demo.MultiAgentContextDemo
 ```
 
 ### 5. 运行数据库相关 Demo

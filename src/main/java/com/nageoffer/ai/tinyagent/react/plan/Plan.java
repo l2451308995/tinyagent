@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 一份完整的执行计划，包含用户原始目标和拆解出的步骤列表。
+ * 一份完整的执行计划，包含用户原始目标和拆解出的步骤列表
  * 由 Planner 创建，PlanAndExecuteAgent 驱动执行，重规划时把已完成和已失败的步骤与新计划合并
  */
 public class Plan {

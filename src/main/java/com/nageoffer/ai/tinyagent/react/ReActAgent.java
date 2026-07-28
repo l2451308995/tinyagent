@@ -12,6 +12,7 @@ import com.nageoffer.ai.tinyagent.react.memory.LongTermMemoryRetriever;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -120,7 +121,25 @@ public class ReActAgent {
     }
 
     public String run(String userMessage, String userId) {
+        return runDetailed(userMessage, userId).answer();
+    }
+
+    /**
+     * 执行 ReAct 循环，并把本轮真正看到的工具证据一并交给上层
+     * 普通单体 Agent 继续调用 {@link #run(String)} 即可；多 Agent 交接使用这个入口，
+     * 避免只能转发模型整理后的自然语言结论
+     */
+    public RunResult runDetailed(String userMessage) {
+        return runDetailed(userMessage, null);
+    }
+
+    public RunResult runDetailed(String userMessage, String userId) {
         ArrayNode messages = objectMapper.createArrayNode();
+        List<ToolObservation> observations = new ArrayList<>();
+
+        // 本轮已经出现过的工具返回，key 是工具名加返回原文，value 是第一次出现在第几圈
+        // 模型换个近义词再查一次是常事，返回却一字不差，正文没必要第二次进上下文
+        Map<String, Integer> seenObservations = new HashMap<>();
 
         String systemPrompt = buildSystemPrompt();
         ObjectNode systemMsg = messages.addObject();
@@ -214,21 +233,26 @@ public class ReActAgent {
         for (int step = 1; step <= maxSteps; step++) {
             System.out.println("\n===== 第 " + step + " 圈 =====");
 
-            if (budget.isExceeded()) {
-                System.out.println("[终止] Token 预算耗尽（" + budget.getReport() + "）");
-                return "抱歉，本次对话信息量较大，已达到处理上限。请尝试简化问题或分多次咨询。";
+            if (!budget.canStartModelCall()) {
+                System.out.println("[终止] 上下文预算不足，无法为下一次模型调用预留生成空间（"
+                        + budget.getPreflightReport() + "）");
+                return new RunResult(
+                        "抱歉，本次对话信息量较大，已达到处理上限。请尝试简化问题或分多次咨询。",
+                        observations,
+                        TerminationStatus.BUDGET_EXHAUSTED);
             }
 
             ChatResponse response = llmClient.chatWithTools(messages, tools);
 
             if (!response.hasToolCalls()) {
                 String answer = response.content() != null ? response.content() : "";
+                budget.addCurrentTurn(answer);
                 System.out.println("[最终答复] " + answer);
                 if (chatMemory != null) {
                     chatMemory.add(ChatMessage.assistant(answer));
                 }
                 System.out.println("[预算] " + budget.getReport());
-                return answer;
+                return new RunResult(answer, observations, TerminationStatus.COMPLETED);
             }
 
             if (response.content() != null && !response.content().isBlank()) {
@@ -243,7 +267,10 @@ public class ReActAgent {
                 if (chatMemory != null) {
                     chatMemory.add(ChatMessage.assistant(stopMsg));
                 }
-                return stopMsg;
+                return new RunResult(
+                        stopMsg,
+                        observations,
+                        TerminationStatus.REPEATED_ACTION);
             }
 
             if (progressDetector.isStuck(response.content())) {
@@ -252,7 +279,10 @@ public class ReActAgent {
                 if (chatMemory != null) {
                     chatMemory.add(ChatMessage.assistant(stuckMsg));
                 }
-                return stuckMsg;
+                return new RunResult(
+                        stuckMsg,
+                        observations,
+                        TerminationStatus.NO_PROGRESS);
             }
 
             ObjectNode assistantMsg = messages.addObject();
@@ -309,12 +339,28 @@ public class ReActAgent {
                 }
 
                 System.out.println("[工具结果] " + observation);
+                observations.add(new ToolObservation(
+                        tc.functionName(),
+                        tc.arguments() == null ? "" : tc.arguments(),
+                        observation));
+
+                // 事实抽取拿的是上面那份完整返回，模型看到的可以只是一行引用
+                String contextObservation = observation;
+                Integer firstSeenStep = seenObservations.putIfAbsent(
+                        tc.functionName() + "|" + observation, step);
+                if (firstSeenStep != null) {
+                    contextObservation = "{\"note\":\"与本轮第 " + firstSeenStep
+                            + " 圈 " + tc.functionName()
+                            + " 的返回完全相同，正文不再重复，请直接用上一次的结果\"}";
+                    System.out.println("[上下文] 重复返回折叠：" + observation.length()
+                            + " → " + contextObservation.length() + " 字符");
+                }
 
                 ObjectNode toolMsg = messages.addObject();
                 toolMsg.put("role", "tool");
                 toolMsg.put("tool_call_id", tc.id());
-                toolMsg.put("content", observation);
-                budget.addCurrentTurn(observation);
+                toolMsg.put("content", contextObservation);
+                budget.addCurrentTurn(contextObservation);
 
                 if (targetTool instanceof DynamicToolProvider provider) {
                     List<Tool> newTools = provider.dynamicTools();
@@ -343,11 +389,48 @@ public class ReActAgent {
         if (chatMemory != null) {
             chatMemory.add(ChatMessage.assistant(maxStepMsg));
         }
-        return maxStepMsg;
+        return new RunResult(
+                maxStepMsg,
+                observations,
+                TerminationStatus.MAX_STEPS);
     }
 
     private String buildSystemPrompt() {
         return systemPrompt;
+    }
+
+    public record ToolObservation(String toolName, String arguments, String output) {
+    }
+
+    public enum TerminationStatus {
+        COMPLETED,
+        BUDGET_EXHAUSTED,
+        REPEATED_ACTION,
+        NO_PROGRESS,
+        MAX_STEPS,
+        GROUNDING_VIOLATION,
+        MISSING_REQUIRED_EVIDENCE,
+        SCOPE_VIOLATION
+    }
+
+    public record RunResult(
+            String answer,
+            List<ToolObservation> observations,
+            TerminationStatus status) {
+
+        public RunResult(String answer, List<ToolObservation> observations) {
+            this(answer, observations, TerminationStatus.COMPLETED);
+        }
+
+        public RunResult {
+            answer = answer == null ? "" : answer;
+            observations = observations == null ? List.of() : List.copyOf(observations);
+            status = status == null ? TerminationStatus.NO_PROGRESS : status;
+        }
+
+        public boolean completed() {
+            return status == TerminationStatus.COMPLETED;
+        }
     }
 
     private enum RepeatAction {
@@ -407,7 +490,7 @@ public class ReActAgent {
             }
 
             if (recentContents.size() > windowSize) {
-                recentContents.remove(0);
+                recentContents.removeFirst();
             }
 
             for (int i = 1; i < recentContents.size(); i++) {

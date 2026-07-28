@@ -1,7 +1,7 @@
 package com.nageoffer.ai.tinyagent.react.plan;
 
 /**
- * 计划中的一个执行步骤。
+ * 计划中的一个执行步骤
  * 由 Planner 生成，交给 Executor 逐步执行，执行结果回填到 result 字段
  */
 public class PlanStep {

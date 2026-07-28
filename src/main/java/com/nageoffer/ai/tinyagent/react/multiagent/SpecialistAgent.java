@@ -44,9 +44,19 @@ public class SpecialistAgent implements Agent {
 
     @Override
     public String run(String userMessage) {
+        return runDetailed(userMessage).answer();
+    }
+
+    /**
+     * 除了最终答复，把本轮真正调用过的工具证据一并交出来
+     * 第 22 篇的主管只需要 {@link #run(String)} 的那段文本；第 23 篇的结构化交接要靠这里的
+     * observations 抽 facts，否则下游只能拿到模型整理过的自然语言
+     */
+    public ReActAgent.RunResult runDetailed(String userMessage) {
         System.out.println("\n>>> [" + name + "] 接手子任务：" + userMessage);
-        String result = delegate.run(userMessage);
-        System.out.println("<<< [" + name + "] 交回结果");
+        ReActAgent.RunResult result = delegate.runDetailed(userMessage);
+        System.out.println("<<< [" + name + "] 交回结果，收敛状态 " + result.status()
+                + "，工具证据 " + result.observations().size() + " 条");
         return result;
     }
 }
