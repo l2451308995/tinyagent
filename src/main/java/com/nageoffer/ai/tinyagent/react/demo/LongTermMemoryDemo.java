@@ -1,9 +1,6 @@
 package com.nageoffer.ai.tinyagent.react.demo;
 
-import com.nageoffer.ai.tinyagent.react.EmbeddingClient;
-import com.nageoffer.ai.tinyagent.react.LlmClient;
-import com.nageoffer.ai.tinyagent.react.ReActAgent;
-import com.nageoffer.ai.tinyagent.react.ToolRegistry;
+import com.nageoffer.ai.tinyagent.react.*;
 import com.nageoffer.ai.tinyagent.react.memory.ChatMemory;
 import com.nageoffer.ai.tinyagent.react.memory.ExtractedProfile;
 import com.nageoffer.ai.tinyagent.react.memory.PersistentHybridChatMemory;
@@ -113,11 +110,7 @@ public class LongTermMemoryDemo {
     }
 
     private static DataSource createDataSource(Properties dotEnv) {
-        PGSimpleDataSource ds = new PGSimpleDataSource();
-        ds.setUrl(setting(dotEnv, "TINYAGENT_DB_URL", "jdbc:postgresql://localhost:5432/tinyagent"));
-        ds.setUser(setting(dotEnv, "TINYAGENT_DB_USER", "postgres"));
-        ds.setPassword(setting(dotEnv, "TINYAGENT_DB_PASSWORD", "postgres"));
-        return ds;
+        return DataSourceUtil.createDataSource(dotEnv);
     }
 
     private static Properties loadDotEnv() {
