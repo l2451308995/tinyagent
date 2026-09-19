@@ -2,7 +2,7 @@ package com.nageoffer.ai.tinyagent.react.context;
 
 import lombok.Getter;
 
-public class  ContextBudget {
+public class ContextBudget {
 
     private static final double TOKENS_PER_CHAR = 1.0;
 
