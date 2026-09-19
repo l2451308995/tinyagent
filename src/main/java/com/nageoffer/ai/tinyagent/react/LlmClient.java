@@ -41,7 +41,7 @@ public class LlmClient {
 
     public ChatResponse chatWithTools(ArrayNode messages, ArrayNode tools) {
         try {
-                ObjectNode requestBody = objectMapper.createObjectNode();
+            ObjectNode requestBody = objectMapper.createObjectNode();
             requestBody.put("model", model);
             requestBody.put("temperature", 0.1);
             requestBody.set("messages", messages);
