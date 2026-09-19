@@ -24,7 +24,7 @@ public class PlanAndExecuteDemo {
         toolRegistry.register(new ApplyRefundTool());
         toolRegistry.register(new SearchKnowledgeTool());
         toolRegistry.register(new GetCurrentTimeTool());
-                                                 
+
         Properties dotEnv = loadDotEnv();
         LlmClient llmClient = new LlmClient(
                 setting(dotEnv, "TINYAGENT_API_URL",
